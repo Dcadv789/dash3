@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, ChevronDown, ChevronRight, Check, X, AlertCircle } from 'lucide-react';
+import { Copy, ChevronDown, ChevronRight, Plus, Minus, Equal } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface Company {
@@ -50,9 +50,6 @@ export const EmpresasContasDRE = () => {
   const [contas, setContas] = useState<DREAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showCopyModal, setShowCopyModal] = useState(false);
-  const [copyFromCompanyId, setCopyFromCompanyId] = useState<string>('');
-  const [copyToCompanyId, setCopyToCompanyId] = useState<string>('');
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -90,12 +87,7 @@ export const EmpresasContasDRE = () => {
       const { data: mainAccounts, error: mainError } = await supabase
         .from('contas_dre_modelo')
         .select(`
-          id,
-          nome,
-          tipo,
-          simbolo,
-          ordem_padrao,
-          visivel,
+          *,
           contas_secundarias:dre_contas_secundarias(
             id,
             nome,
@@ -124,8 +116,9 @@ export const EmpresasContasDRE = () => {
 
       if (mainError) throw mainError;
 
+      // Fetch existing selections for the company
       const { data: empresaContas, error: empresaError } = await supabase
-        .from('empresas_contas_dre')
+        .from('dre_empresa_componentes')
         .select('*')
         .eq('empresa_id', selectedCompanyId);
 
@@ -133,17 +126,17 @@ export const EmpresasContasDRE = () => {
 
       const processedAccounts = mainAccounts?.map(account => ({
         ...account,
-        isSelected: empresaContas?.some(ec => ec.conta_dre_modelo_id === account.id) || false,
+        isSelected: empresaContas?.some(ec => ec.dre_conta_principal_id === account.id) || false,
         contas_secundarias: account.contas_secundarias?.map(secondary => ({
           ...secondary,
           isSelected: empresaContas?.some(ec => 
-            ec.conta_dre_modelo_id === account.id && 
+            ec.dre_conta_principal_id === account.id && 
             ec.dre_conta_secundaria_id === secondary.id
           ) || false,
           componentes: secondary.componentes?.map(comp => ({
             ...comp,
             isSelected: empresaContas?.some(ec =>
-              ec.conta_dre_modelo_id === account.id &&
+              ec.dre_conta_principal_id === account.id &&
               ec.dre_conta_secundaria_id === secondary.id &&
               ec.componente_id === comp.id
             ) || false
@@ -152,7 +145,7 @@ export const EmpresasContasDRE = () => {
         componentes: account.componentes?.map(comp => ({
           ...comp,
           isSelected: empresaContas?.some(ec =>
-            ec.conta_dre_modelo_id === account.id &&
+            ec.dre_conta_principal_id === account.id &&
             ec.componente_id === comp.id
           ) || false
         }))
@@ -185,24 +178,29 @@ export const EmpresasContasDRE = () => {
       if (!account) return;
 
       if (account.isSelected) {
-        // Remover conta
+        // Remove account and all its components
         const { error } = await supabase
-          .from('empresas_contas_dre')
+          .from('dre_empresa_componentes')
           .delete()
           .eq('empresa_id', selectedCompanyId)
-          .eq('conta_dre_modelo_id', accountId);
+          .eq('dre_conta_principal_id', accountId);
 
         if (error) throw error;
       } else {
-        // Adicionar conta
-        const { error } = await supabase
-          .from('empresas_contas_dre')
-          .insert({
-            empresa_id: selectedCompanyId,
-            conta_dre_modelo_id: accountId
-          });
+        // Add account and its direct components
+        const componentsToAdd = account.componentes?.map(comp => ({
+          empresa_id: selectedCompanyId,
+          dre_conta_principal_id: accountId,
+          componente_id: comp.id
+        })) || [];
 
-        if (error) throw error;
+        if (componentsToAdd.length > 0) {
+          const { error } = await supabase
+            .from('dre_empresa_componentes')
+            .insert(componentsToAdd);
+
+          if (error) throw error;
+        }
       }
 
       await fetchContas();
@@ -219,26 +217,31 @@ export const EmpresasContasDRE = () => {
       if (!mainAccount || !secondary) return;
 
       if (secondary.isSelected) {
-        // Remover conta secundária
+        // Remove secondary account and its components
         const { error } = await supabase
-          .from('empresas_contas_dre')
+          .from('dre_empresa_componentes')
           .delete()
           .eq('empresa_id', selectedCompanyId)
-          .eq('conta_dre_modelo_id', mainAccountId)
+          .eq('dre_conta_principal_id', mainAccountId)
           .eq('dre_conta_secundaria_id', secondaryId);
 
         if (error) throw error;
       } else {
-        // Adicionar conta secundária
-        const { error } = await supabase
-          .from('empresas_contas_dre')
-          .insert({
-            empresa_id: selectedCompanyId,
-            conta_dre_modelo_id: mainAccountId,
-            dre_conta_secundaria_id: secondaryId
-          });
+        // Add secondary account and its components
+        const componentsToAdd = secondary.componentes?.map(comp => ({
+          empresa_id: selectedCompanyId,
+          dre_conta_principal_id: mainAccountId,
+          dre_conta_secundaria_id: secondaryId,
+          componente_id: comp.id
+        })) || [];
 
-        if (error) throw error;
+        if (componentsToAdd.length > 0) {
+          const { error } = await supabase
+            .from('dre_empresa_componentes')
+            .insert(componentsToAdd);
+
+          if (error) throw error;
+        }
       }
 
       await fetchContas();
@@ -253,28 +256,42 @@ export const EmpresasContasDRE = () => {
       const mainAccount = contas.find(c => c.id === mainAccountId);
       if (!mainAccount) return;
 
-      const isSelected = secondaryId
-        ? mainAccount.contas_secundarias?.find(s => s.id === secondaryId)?.componentes?.find(c => c.id === componentId)?.isSelected
-        : mainAccount.componentes?.find(c => c.id === componentId)?.isSelected;
+      let component;
+      if (secondaryId) {
+        component = mainAccount.contas_secundarias
+          ?.find(s => s.id === secondaryId)
+          ?.componentes?.find(c => c.id === componentId);
+      } else {
+        component = mainAccount.componentes?.find(c => c.id === componentId);
+      }
 
-      if (isSelected) {
-        // Remover componente
-        const { error } = await supabase
-          .from('empresas_contas_dre')
-          .delete()
-          .eq('empresa_id', selectedCompanyId)
-          .eq('conta_dre_modelo_id', mainAccountId)
-          .eq('componente_id', componentId)
-          .eq('dre_conta_secundaria_id', secondaryId || null);
+      if (!component) return;
 
+      const query = supabase
+        .from('dre_empresa_componentes')
+        .delete()
+        .eq('empresa_id', selectedCompanyId)
+        .eq('dre_conta_principal_id', mainAccountId)
+        .eq('componente_id', componentId);
+
+      // Only add the secondary account condition if it exists
+      if (secondaryId) {
+        query.eq('dre_conta_secundaria_id', secondaryId);
+      } else {
+        query.is('dre_conta_secundaria_id', null);
+      }
+
+      if (component.isSelected) {
+        // Remove component
+        const { error } = await query;
         if (error) throw error;
       } else {
-        // Adicionar componente
+        // Add component
         const { error } = await supabase
-          .from('empresas_contas_dre')
+          .from('dre_empresa_componentes')
           .insert({
             empresa_id: selectedCompanyId,
-            conta_dre_modelo_id: mainAccountId,
+            dre_conta_principal_id: mainAccountId,
             dre_conta_secundaria_id: secondaryId || null,
             componente_id: componentId
           });
@@ -289,6 +306,14 @@ export const EmpresasContasDRE = () => {
     }
   };
 
+  const getSymbolIcon = (simbolo: string | null) => {
+    switch (simbolo) {
+      case '+': return <Plus size={16} className="text-green-400" />;
+      case '-': return <Minus size={16} className="text-red-400" />;
+      default: return <Equal size={16} className="text-blue-400" />;
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto py-8">
       <div className="flex justify-between items-center mb-6">
@@ -296,18 +321,10 @@ export const EmpresasContasDRE = () => {
           <h1 className="text-2xl font-bold text-zinc-100">DRE por Empresa</h1>
           <p className="text-zinc-400 mt-1">Configure as contas do DRE para cada empresa</p>
         </div>
-        <button
-          onClick={() => setShowCopyModal(true)}
-          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300 flex items-center gap-2"
-        >
-          <Copy size={20} />
-          Copiar Estrutura
-        </button>
       </div>
 
       {error && (
-        <div className="mb-6 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 flex items-center gap-2">
-          <AlertCircle size={20} className="text-red-400" />
+        <div className="mb-6 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
           <p className="text-red-400">{error}</p>
         </div>
       )}
@@ -352,27 +369,21 @@ export const EmpresasContasDRE = () => {
                       <ChevronRight size={20} className="text-zinc-400" />
                     )}
                   </button>
-                  <span className="text-zinc-100 font-medium">{conta.nome}</span>
-                  <span className={`px-2 py-1 rounded-full text-xs ${
-                    conta.tipo === 'simples' ? 'bg-blue-500/20 text-blue-400' :
-                    conta.tipo === 'composta' ? 'bg-green-500/20 text-green-400' :
-                    'bg-purple-500/20 text-purple-400'
-                  }`}>
-                    {conta.tipo}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {getSymbolIcon(conta.simbolo)}
+                    <span className="text-zinc-100 font-medium">{conta.nome}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => toggleMainAccount(conta.id)}
-                    className={`px-3 py-1 rounded-lg text-sm ${
-                      conta.isSelected
-                        ? 'bg-green-500/20 text-green-400'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                    }`}
-                  >
-                    {conta.isSelected ? 'Selecionada' : 'Selecionar'}
-                  </button>
-                </div>
+                <button
+                  onClick={() => toggleMainAccount(conta.id)}
+                  className={`px-3 py-1 rounded-lg text-sm ${
+                    conta.isSelected
+                      ? 'bg-green-500/20 text-green-400'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                  }`}
+                >
+                  {conta.isSelected ? 'Selecionada' : 'Selecionar'}
+                </button>
               </div>
 
               {expandedAccounts.has(conta.id) && (
