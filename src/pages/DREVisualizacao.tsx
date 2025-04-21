@@ -190,15 +190,21 @@ export const DREVisualizacao = () => {
             nome,
             ordem
           ),
-          componente_id,
-          categoria:categories!contas_dre_componentes_referencia_id_fkey(
+          componente:contas_dre_componentes(
             id,
-            name,
-            type
-          ),
-          indicador:indicators(
-            id,
-            name
+            referencia_tipo,
+            referencia_id,
+            peso,
+            ordem,
+            categoria:categories!contas_dre_componentes_referencia_id_fkey(
+              id,
+              name,
+              type
+            ),
+            indicador:indicators(
+              id,
+              name
+            )
           )
         `)
         .eq('empresa_id', selectedCompanyId)
