@@ -97,32 +97,38 @@ export const EmpresasContasDRE = () => {
     try {
       setSaving(true);
       const existingConta = empresasContas.find(
-        ec => ec.conta_dre_modelo_id === contaId
+        ec => ec.conta_dre_modelo_id === contaId && ec.empresa_id === selectedCompanyId
       );
 
-      if (checked && !existingConta) {
-        // Criar nova relação
+      if (existingConta) {
+        // Atualizar visibilidade
         const { error } = await supabase
+          .from('empresas_contas_dre')
+          .update({ visivel: checked })
+          .eq('id', existingConta.id);
+
+        if (error) throw error;
+
+        setEmpresasContas(empresasContas.map(ec => 
+          ec.id === existingConta.id ? { ...ec, visivel: checked } : ec
+        ));
+      } else {
+        // Criar nova relação
+        const { data, error } = await supabase
           .from('empresas_contas_dre')
           .insert({
             empresa_id: selectedCompanyId,
             conta_dre_modelo_id: contaId,
             ordem: dreContas.find(c => c.id === contaId)?.ordem_padrao || 0,
-            visivel: true
-          });
+            visivel: checked
+          })
+          .select()
+          .single();
 
         if (error) throw error;
-      } else if (!checked && existingConta) {
-        // Atualizar visibilidade
-        const { error } = await supabase
-          .from('empresas_contas_dre')
-          .update({ visivel: false })
-          .eq('id', existingConta.id);
-
-        if (error) throw error;
+        setEmpresasContas([...empresasContas, data]);
       }
 
-      await fetchEmpresasContas();
       setSuccess('Configuração atualizada com sucesso!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -137,7 +143,7 @@ export const EmpresasContasDRE = () => {
     try {
       setSaving(true);
       const existingConta = empresasContas.find(
-        ec => ec.conta_dre_modelo_id === contaId
+        ec => ec.conta_dre_modelo_id === contaId && ec.empresa_id === selectedCompanyId
       );
 
       if (existingConta) {
@@ -148,7 +154,10 @@ export const EmpresasContasDRE = () => {
 
         if (error) throw error;
 
-        await fetchEmpresasContas();
+        setEmpresasContas(empresasContas.map(ec =>
+          ec.id === existingConta.id ? { ...ec, ordem: newOrder } : ec
+        ));
+        
         setSuccess('Ordem atualizada com sucesso!');
         setTimeout(() => setSuccess(null), 3000);
       }
@@ -162,14 +171,14 @@ export const EmpresasContasDRE = () => {
 
   const isContaActive = (contaId: string): boolean => {
     const empresaConta = empresasContas.find(
-      ec => ec.conta_dre_modelo_id === contaId
+      ec => ec.conta_dre_modelo_id === contaId && ec.empresa_id === selectedCompanyId
     );
     return empresaConta?.visivel || false;
   };
 
   const getContaOrder = (contaId: string): number => {
     const empresaConta = empresasContas.find(
-      ec => ec.conta_dre_modelo_id === contaId
+      ec => ec.conta_dre_modelo_id === contaId && ec.empresa_id === selectedCompanyId
     );
     return empresaConta?.ordem || 0;
   };
