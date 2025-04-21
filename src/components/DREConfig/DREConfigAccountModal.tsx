@@ -145,32 +145,33 @@ export const DREConfigAccountModal = ({
         if (error) throw error;
         newAccountId = editingAccount.id;
       } else {
-        const { data, error } = await supabase
+        const { data, error: insertError } = await supabase
           .from('dre_config_accounts')
           .insert([accountData])
           .select()
           .single();
 
-        if (error) throw error;
+        if (insertError) throw insertError;
         newAccountId = data.id;
         setAccountId(data.id);
       }
 
       // Salvar os componentes
       if (accountType === 'category' && selectedCategories.length > 0) {
-        const componentsToAdd = selectedCategories.map((categoryId, index) => ({
-          conta_dre_modelo_id: newAccountId,
-          referencia_tipo: 'categoria' as const,
-          referencia_id: categoryId,
-          peso: 1,
-          ordem: index
-        }));
+        for (const categoryId of selectedCategories) {
+          const { error: componentError } = await supabase
+            .from('contas_dre_componentes')
+            .insert({
+              conta_dre_modelo_id: newAccountId,
+              referencia_tipo: 'categoria',
+              referencia_id: categoryId,
+              categoria_id: categoryId,
+              peso: 1,
+              ordem: selectedCategories.indexOf(categoryId)
+            });
 
-        const { error: componentsError } = await supabase
-          .from('contas_dre_componentes')
-          .insert(componentsToAdd);
-
-        if (componentsError) throw componentsError;
+          if (componentError) throw componentError;
+        }
       }
 
       if (accountType === 'calculated' && selectedIndicator) {
@@ -178,7 +179,7 @@ export const DREConfigAccountModal = ({
           .from('contas_dre_componentes')
           .insert({
             conta_dre_modelo_id: newAccountId,
-            referencia_tipo: 'indicador' as const,
+            referencia_tipo: 'indicador',
             referencia_id: selectedIndicator,
             peso: 1,
             ordem: 0
