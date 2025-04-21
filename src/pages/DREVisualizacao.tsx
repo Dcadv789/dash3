@@ -174,21 +174,35 @@ export const DREVisualizacao = () => {
 
       const months = getLast12Months();
 
-      // Buscar contas do DRE que estão ativas para a empresa
-      const { data: accounts, error: accountsError } = await supabase
-        .from('empresas_contas_dre')
+      // Buscar contas selecionadas para a empresa
+      const { data: selectedAccounts, error: accountsError } = await supabase
+        .from('dre_empresa_componentes')
         .select(`
-          conta_dre_modelo:contas_dre_modelo (
+          dre_conta_principal:contas_dre_modelo!inner(
             id,
             nome,
             tipo,
             simbolo,
             ordem_padrao
+          ),
+          dre_conta_secundaria:dre_contas_secundarias(
+            id,
+            nome,
+            ordem
+          ),
+          componente_id,
+          categoria:categories!contas_dre_componentes_referencia_id_fkey(
+            id,
+            name,
+            type
+          ),
+          indicador:indicators(
+            id,
+            name
           )
         `)
         .eq('empresa_id', selectedCompanyId)
-        .eq('visivel', true)
-        .order('ordem');
+        .order('dre_conta_principal(ordem_padrao)');
 
       if (accountsError) throw accountsError;
 
@@ -216,30 +230,44 @@ export const DREVisualizacao = () => {
       );
 
       // Processar os dados
-      const processedData = accounts?.map(({ conta_dre_modelo: account }) => {
+      const processedData = selectedAccounts?.reduce((acc: DREData[], account) => {
         const monthlyValues: { [key: string]: number } = {};
         let totalValue = 0;
 
         monthlyData.forEach(({ month, year, data }) => {
           const monthKey = `${month}-${year}`;
-          const value = calculateAccountValue(account, data);
+          const value = calculateAccountValue(account.dre_conta_principal, data);
           monthlyValues[monthKey] = value;
           totalValue += value;
         });
 
-        return {
-          accountId: account.id,
-          name: account.nome,
-          symbol: account.simbolo || '=',
-          type: account.tipo,
-          order: account.ordem_padrao,
-          monthlyValues,
-          value: totalValue,
-          isExpanded: true
-        };
-      }) || [];
+        // Verificar se a conta já existe no array
+        const existingAccount = acc.find(a => a.accountId === account.dre_conta_principal.id);
 
-      setDreData(processedData);
+        if (existingAccount) {
+          // Atualizar valores da conta existente
+          existingAccount.value += totalValue;
+          Object.keys(monthlyValues).forEach(key => {
+            existingAccount.monthlyValues[key] = (existingAccount.monthlyValues[key] || 0) + monthlyValues[key];
+          });
+        } else {
+          // Adicionar nova conta
+          acc.push({
+            accountId: account.dre_conta_principal.id,
+            name: account.dre_conta_principal.nome,
+            symbol: account.dre_conta_principal.simbolo || '=',
+            type: account.dre_conta_principal.tipo,
+            order: account.dre_conta_principal.ordem_padrao,
+            monthlyValues,
+            value: totalValue,
+            isExpanded: true
+          });
+        }
+
+        return acc;
+      }, []) || [];
+
+      setDreData(processedData.sort((a, b) => a.order - b.order));
     } catch (err) {
       console.error('Erro ao carregar dados do DRE:', err);
       setError('Erro ao carregar dados do DRE');

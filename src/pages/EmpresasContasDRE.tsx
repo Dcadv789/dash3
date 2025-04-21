@@ -98,7 +98,7 @@ export const EmpresasContasDRE = () => {
               referencia_id,
               peso,
               ordem,
-              categoria:categories(name, code),
+              categoria:categories!contas_dre_componentes_referencia_id_fkey(name, code),
               indicador:indicators(name, code)
             )
           ),
@@ -108,7 +108,7 @@ export const EmpresasContasDRE = () => {
             referencia_id,
             peso,
             ordem,
-            categoria:categories(name, code),
+            categoria:categories!contas_dre_componentes_referencia_id_fkey(name, code),
             indicador:indicators(name, code)
           )
         `)
