@@ -169,8 +169,8 @@ export const DREVisualizacao = () => {
 
       const months = getLast12Months();
 
-      // Buscar contas selecionadas para a empresa
-      const { data: selectedAccounts, error: accountsError } = await supabase
+      // Buscar todas as contas e componentes selecionados para a empresa
+      const { data: selectedComponents, error: componentsError } = await supabase
         .from('dre_empresa_componentes')
         .select(`
           dre_conta_principal:contas_dre_modelo!inner(
@@ -185,13 +185,13 @@ export const DREVisualizacao = () => {
             nome,
             ordem
           ),
-          componente:contas_dre_componentes(
+          componente:contas_dre_componentes!inner(
             id,
             referencia_tipo,
             referencia_id,
             peso,
             ordem,
-            categoria:categories!contas_dre_componentes_referencia_id_fkey(
+            categoria:categories(
               id,
               name,
               type
@@ -203,9 +203,19 @@ export const DREVisualizacao = () => {
           )
         `)
         .eq('empresa_id', selectedCompanyId)
-        .order('dre_conta_principal(ordem_padrao)');
+        .eq('is_active', true);
 
-      if (accountsError) throw accountsError;
+      if (componentsError) throw componentsError;
+
+      // Agrupar componentes por conta principal
+      const accountComponents = new Map<string, any[]>();
+      selectedComponents?.forEach(selection => {
+        const accountId = selection.dre_conta_principal.id;
+        if (!accountComponents.has(accountId)) {
+          accountComponents.set(accountId, []);
+        }
+        accountComponents.get(accountId)?.push(selection);
+      });
 
       // Buscar dados brutos para os últimos 12 meses
       const monthlyData = await Promise.all(
@@ -231,41 +241,49 @@ export const DREVisualizacao = () => {
       );
 
       // Processar os dados
-      const accountsMap = new Map<string, DREData>();
+      const dreDataArray: DREData[] = [];
 
-      selectedAccounts?.forEach(account => {
+      for (const [accountId, components] of accountComponents) {
+        const account = components[0].dre_conta_principal;
         const monthlyValues: { [key: string]: number } = {};
         let totalValue = 0;
 
         monthlyData.forEach(({ month, year, data }) => {
           const monthKey = `${month}-${year}`;
-          const relevantData = data.filter(d => {
-            const componentCategories = account.componente?.categoria?.id;
-            const componentIndicators = account.componente?.indicador?.id;
-            return (d.categoria_id === componentCategories) || (d.indicador_id === componentIndicators);
+          let monthTotal = 0;
+
+          // Somar valores de todos os componentes para este mês
+          components.forEach(selection => {
+            const component = selection.componente;
+            const relevantData = data.filter(d => {
+              if (component.referencia_tipo === 'categoria') {
+                return d.categoria_id === component.categoria?.id;
+              } else {
+                return d.indicador_id === component.indicador?.id;
+              }
+            });
+
+            const componentValue = calculateAccountValue(relevantData) * (component.peso || 1);
+            monthTotal += componentValue;
           });
 
-          const value = calculateAccountValue(relevantData);
-          monthlyValues[monthKey] = value;
-          totalValue += value;
+          monthlyValues[monthKey] = monthTotal;
+          totalValue += monthTotal;
         });
 
-        const accountId = account.dre_conta_principal.id;
-        if (!accountsMap.has(accountId)) {
-          accountsMap.set(accountId, {
-            accountId,
-            name: account.dre_conta_principal.nome,
-            symbol: account.dre_conta_principal.simbolo || '=',
-            type: account.dre_conta_principal.tipo,
-            order: account.dre_conta_principal.ordem_padrao,
-            monthlyValues,
-            value: totalValue,
-            isExpanded: true
-          });
-        }
-      });
+        dreDataArray.push({
+          accountId: account.id,
+          name: account.nome,
+          symbol: account.simbolo || '=',
+          type: account.tipo,
+          order: account.ordem_padrao,
+          monthlyValues,
+          value: totalValue,
+          isExpanded: true
+        });
+      }
 
-      setDreData(Array.from(accountsMap.values()).sort((a, b) => a.order - b.order));
+      setDreData(dreDataArray.sort((a, b) => a.order - b.order));
     } catch (err) {
       console.error('Erro ao carregar dados do DRE:', err);
       setError('Erro ao carregar dados do DRE');
