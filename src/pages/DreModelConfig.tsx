@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, PencilIcon, Trash2, Save, X, AlertCircle } from 'lucide-react';
+import { Plus, PencilIcon, Trash2, Save, X, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface DreConta {
@@ -7,14 +7,22 @@ interface DreConta {
   nome: string;
   tipo: 'simples' | 'composta' | 'formula' | 'indicador' | 'soma_indicadores';
   simbolo: '+' | '-' | '=' | null;
-  expressao?: string;
   ordem_padrao: number;
   visivel: boolean;
+}
+
+interface DreContaSecundaria {
+  id: string;
+  nome: string;
+  dre_conta_principal_id: string;
+  ordem: number;
+  empresa_ids: string[];
 }
 
 interface DreComponente {
   id: string;
   conta_dre_modelo_id: string;
+  dre_conta_secundaria_id: string | null;
   referencia_tipo: 'categoria' | 'indicador' | 'conta';
   referencia_id: string;
   peso: number;
@@ -27,13 +35,6 @@ interface Referencia {
   codigo?: string;
 }
 
-const OPERATION_LABELS = {
-  sum: 'Soma',
-  subtract: 'Subtração',
-  multiply: 'Multiplicação',
-  divide: 'Divisão'
-};
-
 const SIMBOLOS = [
   { value: '+', label: '+ (Receita)', color: 'text-green-400' },
   { value: '-', label: '- (Despesa)', color: 'text-red-400' },
@@ -42,6 +43,7 @@ const SIMBOLOS = [
 
 export const DreModelConfig = () => {
   const [contas, setContas] = useState<DreConta[]>([]);
+  const [contasSecundarias, setContasSecundarias] = useState<DreContaSecundaria[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -50,24 +52,32 @@ export const DreModelConfig = () => {
   const [editingConta, setEditingConta] = useState<DreConta | null>(null);
   const [selectedContaId, setSelectedContaId] = useState<string | null>(null);
   
+  const [showSecundariaModal, setShowSecundariaModal] = useState(false);
+  const [editingContaSecundaria, setEditingContaSecundaria] = useState<DreContaSecundaria | null>(null);
+  
   const [categorias, setCategorias] = useState<Referencia[]>([]);
   const [indicadores, setIndicadores] = useState<Referencia[]>([]);
   
   const [componentes, setComponentes] = useState<DreComponente[]>([]);
   const [showComponenteModal, setShowComponenteModal] = useState(false);
   const [editingComponente, setEditingComponente] = useState<DreComponente | null>(null);
+  const [selectedContaSecundariaId, setSelectedContaSecundariaId] = useState<string | null>(null);
 
-  // Form state para nova conta
+  // Form states
   const [formData, setFormData] = useState({
     nome: '',
     tipo: 'simples' as DreConta['tipo'],
     simbolo: '+' as '+' | '-' | '=' | null,
-    expressao: '',
     ordem_padrao: 0,
     visivel: true
   });
 
-  // Form state para novo componente
+  const [secundariaData, setSecundariaData] = useState({
+    nome: '',
+    ordem: 0,
+    empresa_ids: [] as string[]
+  });
+
   const [componenteData, setComponenteData] = useState({
     referencia_tipo: 'categoria' as DreComponente['referencia_tipo'],
     referencia_id: '',
@@ -83,6 +93,7 @@ export const DreModelConfig = () => {
 
   useEffect(() => {
     if (selectedContaId) {
+      fetchContasSecundarias(selectedContaId);
       fetchComponentes(selectedContaId);
     }
   }, [selectedContaId]);
@@ -101,6 +112,21 @@ export const DreModelConfig = () => {
       console.error('Erro:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchContasSecundarias = async (contaId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('dre_contas_secundarias')
+        .select('*')
+        .eq('dre_conta_principal_id', contaId)
+        .order('ordem');
+
+      if (error) throw error;
+      setContasSecundarias(data || []);
+    } catch (err) {
+      console.error('Erro ao carregar contas secundárias:', err);
     }
   };
 
@@ -165,7 +191,13 @@ export const DreModelConfig = () => {
       await fetchContas();
       setShowModal(false);
       setEditingConta(null);
-      resetFormData();
+      setFormData({
+        nome: '',
+        tipo: 'simples',
+        simbolo: '+',
+        ordem_padrao: 0,
+        visivel: true
+      });
       setSuccess('Conta salva com sucesso!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -174,34 +206,98 @@ export const DreModelConfig = () => {
     }
   };
 
+  const handleSaveContaSecundaria = async () => {
+    if (!selectedContaId) return;
+
+    try {
+      setLoading(true);
+
+      const contaSecundariaPayload = {
+        nome: secundariaData.nome,
+        dre_conta_principal_id: selectedContaId,
+        ordem: secundariaData.ordem,
+        empresa_ids: secundariaData.empresa_ids
+      };
+
+      if (editingContaSecundaria) {
+        const { error } = await supabase
+          .from('dre_contas_secundarias')
+          .update(contaSecundariaPayload)
+          .eq('id', editingContaSecundaria.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('dre_contas_secundarias')
+          .insert([contaSecundariaPayload]);
+
+        if (error) throw error;
+      }
+
+      await fetchContasSecundarias(selectedContaId);
+      setShowSecundariaModal(false);
+      setEditingContaSecundaria(null);
+      setSecundariaData({
+        nome: '',
+        ordem: 0,
+        empresa_ids: []
+      });
+      setSuccess('Conta secundária salva com sucesso!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError('Erro ao salvar conta secundária');
+      console.error('Erro:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSaveComponente = async () => {
     if (!selectedContaId) return;
 
     try {
-      const componentePayload = editingComponente ? {
-        ...componenteData,
-        id: editingComponente.id,
-        conta_dre_modelo_id: selectedContaId
-      } : {
-        ...componenteData,
-        conta_dre_modelo_id: selectedContaId
+      setLoading(true);
+
+      const componentePayload = {
+        conta_dre_modelo_id: selectedContaId,
+        dre_conta_secundaria_id: selectedContaSecundariaId,
+        referencia_tipo: componenteData.referencia_tipo,
+        referencia_id: componenteData.referencia_id,
+        peso: componenteData.peso,
+        ordem: componenteData.ordem
       };
 
-      const { error } = await supabase
-        .from('contas_dre_componentes')
-        .upsert([componentePayload]);
+      if (editingComponente) {
+        const { error } = await supabase
+          .from('contas_dre_componentes')
+          .update(componentePayload)
+          .eq('id', editingComponente.id);
 
-      if (error) throw error;
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('contas_dre_componentes')
+          .insert([componentePayload]);
+
+        if (error) throw error;
+      }
 
       await fetchComponentes(selectedContaId);
       setShowComponenteModal(false);
       setEditingComponente(null);
-      resetComponenteData();
+      setComponenteData({
+        referencia_tipo: 'categoria',
+        referencia_id: '',
+        peso: 1,
+        ordem: 0
+      });
       setSuccess('Componente salvo com sucesso!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       setError('Erro ao salvar componente');
       console.error('Erro:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -229,6 +325,28 @@ export const DreModelConfig = () => {
     }
   };
 
+  const handleDeleteContaSecundaria = async (contaSecundariaId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir esta conta secundária?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('dre_contas_secundarias')
+        .delete()
+        .eq('id', contaSecundariaId);
+
+      if (error) throw error;
+
+      if (selectedContaId) {
+        await fetchContasSecundarias(selectedContaId);
+      }
+      setSuccess('Conta secundária excluída com sucesso!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError('Erro ao excluir conta secundária');
+      console.error('Erro:', err);
+    }
+  };
+
   const handleDeleteComponente = async (componenteId: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este componente?')) return;
 
@@ -251,26 +369,6 @@ export const DreModelConfig = () => {
     }
   };
 
-  const resetFormData = () => {
-    setFormData({
-      nome: '',
-      tipo: 'simples',
-      simbolo: '+',
-      expressao: '',
-      ordem_padrao: 0,
-      visivel: true
-    });
-  };
-
-  const resetComponenteData = () => {
-    setComponenteData({
-      referencia_tipo: 'categoria',
-      referencia_id: '',
-      peso: 1,
-      ordem: 0
-    });
-  };
-
   if (loading) {
     return (
       <div className="max-w-6xl mx-auto py-8">
@@ -283,6 +381,7 @@ export const DreModelConfig = () => {
 
   return (
     <div className="max-w-6xl mx-auto py-8">
+      {/* Header section */}
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-zinc-100">Configuração do DRE</h1>
@@ -293,13 +392,13 @@ export const DreModelConfig = () => {
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white flex items-center gap-2"
         >
           <Plus size={20} />
-          Nova Conta
+          Nova Conta Principal
         </button>
       </div>
 
+      {/* Messages */}
       {error && (
-        <div className="mb-6 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 flex items-center gap-2">
-          <AlertCircle size={20} className="text-red-400" />
+        <div className="mb-6 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
           <p className="text-red-400">{error}</p>
         </div>
       )}
@@ -310,139 +409,185 @@ export const DreModelConfig = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Lista de Contas */}
-        <div className="bg-zinc-900 rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-zinc-100 mb-4">Contas</h2>
-          <div className="space-y-2">
-            {contas.map(conta => (
-              <div
-                key={conta.id}
-                className={`p-4 rounded-lg transition-colors ${
-                  selectedContaId === conta.id
-                    ? 'bg-zinc-800'
-                    : 'bg-zinc-800/50 hover:bg-zinc-800'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-zinc-100">{conta.nome}</h3>
-                    <p className="text-sm text-zinc-400">
-                      Tipo: {conta.tipo} | Ordem: {conta.ordem_padrao}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingConta(conta);
-                        setFormData({
-                          nome: conta.nome,
-                          tipo: conta.tipo,
-                          simbolo: conta.simbolo,
-                          expressao: conta.expressao || '',
-                          ordem_padrao: conta.ordem_padrao,
-                          visivel: conta.visivel
-                        });
-                        setShowModal(true);
-                      }}
-                      className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-400"
-                    >
-                      <PencilIcon size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteConta(conta.id)}
-                      className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-red-400"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                    <button
-                      onClick={() => setSelectedContaId(conta.id)}
-                      className={`px-3 py-1 rounded-lg text-sm ${
-                        selectedContaId === conta.id
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
-                      }`}
-                    >
-                      Ver Componentes
-                    </button>
-                  </div>
-                </div>
+      {/* Main content */}
+      <div className="bg-zinc-900 rounded-xl p-6">
+        {/* Contas principais */}
+        {contas.map(conta => (
+          <div key={conta.id} className="mb-4">
+            <div className="flex items-center justify-between bg-zinc-800 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedContaId(selectedContaId === conta.id ? null : conta.id)}
+                  className="p-1 hover:bg-zinc-700 rounded-lg"
+                >
+                  {selectedContaId === conta.id ? (
+                    <ChevronDown size={20} className="text-zinc-400" />
+                  ) : (
+                    <ChevronRight size={20} className="text-zinc-400" />
+                  )}
+                </button>
+                <span className="text-zinc-100 font-medium">{conta.nome}</span>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setSelectedContaId(conta.id);
+                    setShowSecundariaModal(true);
+                  }}
+                  className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 text-sm"
+                >
+                  Adicionar Conta Secundária
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedContaId(conta.id);
+                    setShowComponenteModal(true);
+                  }}
+                  className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 text-sm"
+                >
+                  Adicionar Componente
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingConta(conta);
+                    setFormData({
+                      nome: conta.nome,
+                      tipo: conta.tipo,
+                      simbolo: conta.simbolo,
+                      ordem_padrao: conta.ordem_padrao,
+                      visivel: conta.visivel
+                    });
+                    setShowModal(true);
+                  }}
+                  className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400"
+                >
+                  <PencilIcon size={16} />
+                </button>
+                <button
+                  onClick={() => handleDeleteConta(conta.id)}
+                  className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-red-400"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
 
-        {/* Componentes da Conta Selecionada */}
-        <div className="bg-zinc-900 rounded-xl p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-zinc-100">
-              {selectedContaId ? 'Componentes' : 'Selecione uma conta'}
-            </h2>
-            {selectedContaId && (
-              <button
-                onClick={() => setShowComponenteModal(true)}
-                className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300 text-sm flex items-center gap-2"
-              >
-                <Plus size={16} />
-                Novo Componente
-              </button>
+            {/* Contas secundárias e componentes */}
+            {selectedContaId === conta.id && (
+              <div className="ml-8 mt-2 space-y-2">
+                {/* Componentes diretos */}
+                {componentes
+                  .filter(comp => comp.conta_dre_modelo_id === conta.id && !comp.dre_conta_secundaria_id)
+                  .map(componente => (
+                    <div key={componente.id} className="bg-zinc-800/50 p-3 rounded-lg flex items-center justify-between">
+                      <span className="text-zinc-300">
+                        {componente.referencia_tipo === 'categoria' && 
+                          categorias.find(c => c.id === componente.referencia_id)?.nome}
+                        {componente.referencia_tipo === 'indicador' && 
+                          indicadores.find(i => i.id === componente.referencia_id)?.nome}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setEditingComponente(componente);
+                            setComponenteData({
+                              referencia_tipo: componente.referencia_tipo,
+                              referencia_id: componente.referencia_id,
+                              peso: componente.peso,
+                              ordem: componente.ordem
+                            });
+                            setShowComponenteModal(true);
+                          }}
+                          className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400"
+                        >
+                          <PencilIcon size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteComponente(componente.id)}
+                          className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-red-400"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                {/* Contas secundárias */}
+                {contasSecundarias
+                  .filter(cs => cs.dre_conta_principal_id === conta.id)
+                  .map(contaSecundaria => (
+                    <div key={contaSecundaria.id} className="bg-zinc-800/50 p-3 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-zinc-200">{contaSecundaria.nome}</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingContaSecundaria(contaSecundaria);
+                              setSecundariaData({
+                                nome: contaSecundaria.nome,
+                                ordem: contaSecundaria.ordem,
+                                empresa_ids: contaSecundaria.empresa_ids
+                              });
+                              setShowSecundariaModal(true);
+                            }}
+                            className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400"
+                          >
+                            <PencilIcon size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteContaSecundaria(contaSecundaria.id)}
+                            className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-red-400"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Componentes da conta secundária */}
+                      <div className="ml-4 space-y-2">
+                        {componentes
+                          .filter(comp => comp.dre_conta_secundaria_id === contaSecundaria.id)
+                          .map(componente => (
+                            <div key={componente.id} className="bg-zinc-800/30 p-2 rounded-lg flex items-center justify-between">
+                              <span className="text-zinc-400">
+                                {componente.referencia_tipo === 'categoria' && 
+                                  categorias.find(c => c.id === componente.referencia_id)?.nome}
+                                {componente.referencia_tipo === 'indicador' && 
+                                  indicadores.find(i => i.id === componente.referencia_id)?.nome}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingComponente(componente);
+                                    setComponenteData({
+                                      referencia_tipo: componente.referencia_tipo,
+                                      referencia_id: componente.referencia_id,
+                                      peso: componente.peso,
+                                      ordem: componente.ordem
+                                    });
+                                    setSelectedContaSecundariaId(contaSecundaria.id);
+                                    setShowComponenteModal(true);
+                                  }}
+                                  className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400"
+                                >
+                                  <PencilIcon size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteComponente(componente.id)}
+                                  className="p-1 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-red-400"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ))}
+              </div>
             )}
           </div>
-
-          {selectedContaId ? (
-            <div className="space-y-2">
-              {componentes.map(componente => (
-                <div
-                  key={componente.id}
-                  className="p-4 bg-zinc-800/50 rounded-lg"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-zinc-100">
-                        {componente.referencia_tipo === 'categoria' &&
-                          categorias.find(c => c.id === componente.referencia_id)?.nome}
-                        {componente.referencia_tipo === 'indicador' &&
-                          indicadores.find(i => i.id === componente.referencia_id)?.nome}
-                        {componente.referencia_tipo === 'conta' &&
-                          contas.find(c => c.id === componente.referencia_id)?.nome}
-                      </p>
-                      <p className="text-sm text-zinc-400">
-                        Peso: {componente.peso} | Ordem: {componente.ordem}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setEditingComponente(componente);
-                          setComponenteData({
-                            referencia_tipo: componente.referencia_tipo,
-                            referencia_id: componente.referencia_id,
-                            peso: componente.peso,
-                            ordem: componente.ordem
-                          });
-                          setShowComponenteModal(true);
-                        }}
-                        className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-400"
-                      >
-                        <PencilIcon size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteComponente(componente.id)}
-                        className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-red-400"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-zinc-400 text-center py-8">
-              Selecione uma conta para ver seus componentes
-            </p>
-          )}
-        </div>
+        ))}
       </div>
 
       {/* Modal de Conta */}
@@ -457,7 +602,13 @@ export const DreModelConfig = () => {
                 onClick={() => {
                   setShowModal(false);
                   setEditingConta(null);
-                  resetFormData();
+                  setFormData({
+                    nome: '',
+                    tipo: 'simples',
+                    simbolo: '+',
+                    ordem_padrao: 0,
+                    visivel: true
+                  });
                 }}
                 className="text-zinc-400 hover:text-zinc-100"
               >
@@ -513,20 +664,6 @@ export const DreModelConfig = () => {
                 </select>
               </div>
 
-              {formData.tipo === 'formula' && (
-                <div>
-                  <label className="block text-sm font-medium text-zinc-400 mb-1">
-                    Expressão
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.expressao}
-                    onChange={(e) => setFormData({ ...formData, expressao: e.target.value })}
-                    className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
-                  />
-                </div>
-              )}
-
               <div>
                 <label className="block text-sm font-medium text-zinc-400 mb-1">
                   Ordem Padrão
@@ -557,7 +694,13 @@ export const DreModelConfig = () => {
                 onClick={() => {
                   setShowModal(false);
                   setEditingConta(null);
-                  resetFormData();
+                  setFormData({
+                    nome: '',
+                    tipo: 'simples',
+                    simbolo: '+',
+                    ordem_padrao: 0,
+                    visivel: true
+                  });
                 }}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300"
               >
@@ -569,6 +712,83 @@ export const DreModelConfig = () => {
               >
                 <Save size={16} className="inline-block mr-2" />
                 {editingConta ? 'Salvar' : 'Criar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Conta Secundária */}
+      {showSecundariaModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-semibold text-zinc-100">
+                {editingContaSecundaria ? 'Editar Conta Secundária' : 'Nova Conta Secundária'}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowSecundariaModal(false);
+                  setEditingContaSecundaria(null);
+                  setSecundariaData({
+                    nome: '',
+                    ordem: 0,
+                    empresa_ids: []
+                  });
+                }}
+                className="text-zinc-400 hover:text-zinc-100"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">
+                  Nome
+                </label>
+                <input
+                  type="text"
+                  value={secundariaData.nome}
+                  onChange={(e) => setSecundariaData({ ...secundariaData, nome: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">
+                  Ordem
+                </label>
+                <input
+                  type="number"
+                  value={secundariaData.ordem}
+                  onChange={(e) => setSecundariaData({ ...secundariaData, ordem: parseInt(e.target.value) })}
+                  className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => {
+                  setShowSecundariaModal(false);
+                  setEditingContaSecundaria(null);
+                  setSecundariaData({
+                    nome: '',
+                    ordem: 0,
+                    empresa_ids: []
+                  });
+                }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveContaSecundaria}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white"
+              >
+                <Save size={16} className="inline-block mr-2" />
+                {editingContaSecundaria ? 'Salvar' : 'Criar'}
               </button>
             </div>
           </div>
@@ -587,7 +807,12 @@ export const DreModelConfig = () => {
                 onClick={() => {
                   setShowComponenteModal(false);
                   setEditingComponente(null);
-                  resetComponenteData();
+                  setComponenteData({
+                    referencia_tipo: 'categoria',
+                    referencia_id: '',
+                    peso: 1,
+                    ordem: 0
+                  });
                 }}
                 className="text-zinc-400 hover:text-zinc-100"
               >
@@ -683,7 +908,12 @@ export const DreModelConfig = () => {
                 onClick={() => {
                   setShowComponenteModal(false);
                   setEditingComponente(null);
-                  resetComponenteData();
+                  setComponenteData({
+                    referencia_tipo: 'categoria',
+                    referencia_id: '',
+                    peso: 1,
+                    ordem: 0
+                  });
                 }}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300"
               >
