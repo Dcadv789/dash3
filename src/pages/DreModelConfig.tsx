@@ -23,7 +23,7 @@ interface DreComponente {
   id: string;
   conta_dre_modelo_id: string;
   dre_conta_secundaria_id: string | null;
-  referencia_tipo: 'categoria' | 'indicador' | 'conta';
+  referencia_tipo: 'categoria' | 'indicador';
   referencia_id: string;
   peso: number;
   ordem: number;
@@ -441,6 +441,7 @@ export const DreModelConfig = () => {
                 <button
                   onClick={() => {
                     setSelectedContaId(conta.id);
+                    setSelectedContaSecundariaId(null);
                     setShowComponenteModal(true);
                   }}
                   className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 text-sm"
@@ -520,6 +521,16 @@ export const DreModelConfig = () => {
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-zinc-200">{contaSecundaria.nome}</span>
                         <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setSelectedContaId(conta.id);
+                              setSelectedContaSecundariaId(contaSecundaria.id);
+                              setShowComponenteModal(true);
+                            }}
+                            className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 text-sm"
+                          >
+                            Adicionar Componente
+                          </button>
                           <button
                             onClick={() => {
                               setEditingContaSecundaria(contaSecundaria);
@@ -836,7 +847,6 @@ export const DreModelConfig = () => {
                 >
                   <option value="categoria">Categoria</option>
                   <option value="indicador">Indicador</option>
-                  <option value="conta">Conta</option>
                 </select>
               </div>
 
@@ -861,11 +871,6 @@ export const DreModelConfig = () => {
                   {componenteData.referencia_tipo === 'indicador' && indicadores.map(ind => (
                     <option key={ind.id} value={ind.id}>
                       {ind.codigo} - {ind.nome}
-                    </option>
-                  ))}
-                  {componenteData.referencia_tipo === 'conta' && contas.map(conta => (
-                    <option key={conta.id} value={conta.id}>
-                      {conta.nome}
                     </option>
                   ))}
                 </select>
