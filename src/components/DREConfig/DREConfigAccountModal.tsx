@@ -4,6 +4,7 @@ import { DREConfigAccount } from '../../types/DREConfig';
 import { Category, Indicator } from '../../types/financial';
 import { Company } from '../../types/company';
 import { supabase } from '../../lib/supabase';
+import { Notification } from '../Notification';
 
 interface DREConfigAccountModalProps {
   isOpen: boolean;
@@ -39,6 +40,7 @@ export const DREConfigAccountModal = ({
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompanies, setSelectedCompanies] = useState<string[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     fetchCompanies();
@@ -111,6 +113,14 @@ export const DREConfigAccountModal = ({
 
   const handleSave = async () => {
     try {
+      // Primeiro, limpar quaisquer componentes existentes se estiver editando
+      if (editingAccount?.id) {
+        await supabase
+          .from('contas_dre_componentes')
+          .delete()
+          .eq('conta_dre_modelo_id', editingAccount.id);
+      }
+
       const accountData = {
         name: accountName,
         type: accountType === 'category' ? categoryType : accountType,
@@ -120,7 +130,7 @@ export const DREConfigAccountModal = ({
         parent_account_id: selectedParentAccount,
         is_active: true,
         sign: accountType === 'flex' ? blankAccountSign : null,
-        display_order: 0 // A ordem será ajustada automaticamente pelo backend
+        display_order: 0
       };
 
       let newAccountId;
@@ -146,9 +156,46 @@ export const DREConfigAccountModal = ({
         setAccountId(data.id);
       }
 
+      // Salvar os componentes
+      if (accountType === 'category' && selectedCategories.length > 0) {
+        const componentsToAdd = selectedCategories.map((categoryId, index) => ({
+          conta_dre_modelo_id: newAccountId,
+          referencia_tipo: 'categoria' as const,
+          referencia_id: categoryId,
+          peso: 1,
+          ordem: index
+        }));
+
+        const { error: componentsError } = await supabase
+          .from('contas_dre_componentes')
+          .insert(componentsToAdd);
+
+        if (componentsError) throw componentsError;
+      }
+
+      if (accountType === 'calculated' && selectedIndicator) {
+        const { error: componentError } = await supabase
+          .from('contas_dre_componentes')
+          .insert({
+            conta_dre_modelo_id: newAccountId,
+            referencia_tipo: 'indicador' as const,
+            referencia_id: selectedIndicator,
+            peso: 1,
+            ordem: 0
+          });
+
+        if (componentError) throw componentError;
+      }
+
       onSave(accountData as DREConfigAccount);
+      setNotification({ type: 'success', message: 'Conta salva com sucesso!' });
+      setTimeout(() => {
+        setNotification(null);
+        onClose();
+      }, 2000);
     } catch (err) {
       console.error('Erro ao salvar conta:', err);
+      setNotification({ type: 'error', message: 'Erro ao salvar conta. Tente novamente.' });
     }
   };
 
@@ -159,7 +206,6 @@ export const DREConfigAccountModal = ({
       const isSelected = selectedCompanies.includes(companyId);
 
       if (isSelected) {
-        // Remove a relação
         const { error } = await supabase
           .from('dre_config_account_companies')
           .delete()
@@ -169,7 +215,6 @@ export const DREConfigAccountModal = ({
         if (error) throw error;
         setSelectedCompanies(selectedCompanies.filter(id => id !== companyId));
       } else {
-        // Adiciona nova relação
         const { error } = await supabase
           .from('dre_config_account_companies')
           .insert({
@@ -183,6 +228,7 @@ export const DREConfigAccountModal = ({
       }
     } catch (err) {
       console.error('Erro ao atualizar empresas:', err);
+      setNotification({ type: 'error', message: 'Erro ao atualizar empresas. Tente novamente.' });
     }
   };
 
@@ -190,6 +236,13 @@ export const DREConfigAccountModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      {notification && (
+        <Notification
+          type={notification.type}
+          message={notification.message}
+          onClose={() => setNotification(null)}
+        />
+      )}
       <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-lg font-semibold text-zinc-100">
