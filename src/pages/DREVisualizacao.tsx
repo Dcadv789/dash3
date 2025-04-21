@@ -155,16 +155,11 @@ export const DREVisualizacao = () => {
     let totalValue = 0;
 
     rawData.forEach(data => {
-      // Se for receita, mantém positivo
       if (data.category?.type === 'revenue') {
         totalValue += data.valor;
-      }
-      // Se for despesa, torna negativo
-      else if (data.category?.type === 'expense') {
+      } else if (data.category?.type === 'expense') {
         totalValue -= data.valor;
-      }
-      // Se não tiver categoria (ex: indicador), usa o valor como está
-      else {
+      } else {
         totalValue += data.valor;
       }
     });
@@ -179,12 +174,21 @@ export const DREVisualizacao = () => {
 
       const months = getLast12Months();
 
-      // Buscar contas do DRE
+      // Buscar contas do DRE que estão ativas para a empresa
       const { data: accounts, error: accountsError } = await supabase
-        .from('contas_dre_modelo')
-        .select('*')
+        .from('empresas_contas_dre')
+        .select(`
+          conta_dre_modelo:contas_dre_modelo (
+            id,
+            nome,
+            tipo,
+            simbolo,
+            ordem_padrao
+          )
+        `)
+        .eq('empresa_id', selectedCompanyId)
         .eq('visivel', true)
-        .order('ordem_padrao');
+        .order('ordem');
 
       if (accountsError) throw accountsError;
 
@@ -212,7 +216,7 @@ export const DREVisualizacao = () => {
       );
 
       // Processar os dados
-      const processedData = accounts?.map(account => {
+      const processedData = accounts?.map(({ conta_dre_modelo: account }) => {
         const monthlyValues: { [key: string]: number } = {};
         let totalValue = 0;
 
