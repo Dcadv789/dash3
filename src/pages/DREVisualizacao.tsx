@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { ChevronDown, ChevronRight, FileText } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Plus, Minus, Equal } from 'lucide-react';
 
 interface Company {
   id: string;
@@ -17,15 +17,40 @@ interface DREAccount {
   visivel: boolean;
 }
 
+interface DRESecondaryAccount {
+  id: string;
+  nome: string;
+  ordem: number;
+  componentes: DREComponent[];
+}
+
+interface DREComponent {
+  id: string;
+  referencia_tipo: 'categoria' | 'indicador';
+  referencia_id: string;
+  peso: number;
+  ordem: number;
+  categoria?: {
+    name: string;
+    code: string;
+    type: 'revenue' | 'expense';
+  };
+  indicador?: {
+    name: string;
+    code: string;
+  };
+  monthlyValues: { [key: string]: number };
+}
+
 interface DREData {
   accountId: string;
   name: string;
-  value: number;
-  type: string;
   symbol: string;
+  type: string;
   order: number;
   isExpanded?: boolean;
-  children?: DREData[];
+  components: DREComponent[];
+  secondaryAccounts: DRESecondaryAccount[];
   monthlyValues: { [key: string]: number };
 }
 
@@ -36,31 +61,16 @@ interface SystemUser {
   has_all_companies_access: boolean;
 }
 
-interface RawData {
-  valor: number;
-  category?: {
-    type: 'revenue' | 'expense';
-  };
-}
-
 const MONTHS = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
 const MONTH_ABBREVIATIONS: { [key: string]: string } = {
-  'Janeiro': 'Jan',
-  'Fevereiro': 'Fev',
-  'Março': 'Mar',
-  'Abril': 'Abr',
-  'Maio': 'Mai',
-  'Junho': 'Jun',
-  'Julho': 'Jul',
-  'Agosto': 'Ago',
-  'Setembro': 'Set',
-  'Outubro': 'Out',
-  'Novembro': 'Nov',
-  'Dezembro': 'Dez'
+  'Janeiro': 'Jan', 'Fevereiro': 'Fev', 'Março': 'Mar',
+  'Abril': 'Abr', 'Maio': 'Mai', 'Junho': 'Jun',
+  'Julho': 'Jul', 'Agosto': 'Ago', 'Setembro': 'Set',
+  'Outubro': 'Out', 'Novembro': 'Nov', 'Dezembro': 'Dez'
 };
 
 export const DREVisualizacao = () => {
@@ -72,6 +82,8 @@ export const DREVisualizacao = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<SystemUser | null>(null);
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  const [expandedSecondaryAccounts, setExpandedSecondaryAccounts] = useState<Set<string>>(new Set());
   const { user } = useAuth();
 
   useEffect(() => {
@@ -151,17 +163,6 @@ export const DREVisualizacao = () => {
     return months;
   };
 
-  const calculateAccountValue = (rawData: RawData[]): number => {
-    return rawData.reduce((total, data) => {
-      if (data.category?.type === 'revenue') {
-        return total + data.valor;
-      } else if (data.category?.type === 'expense') {
-        return total - data.valor;
-      }
-      return total + data.valor;
-    }, 0);
-  };
-
   const fetchDREData = async () => {
     try {
       setLoading(true);
@@ -169,7 +170,7 @@ export const DREVisualizacao = () => {
 
       const months = getLast12Months();
 
-      // Buscar todas as contas e componentes selecionados para a empresa
+      // Buscar contas e componentes selecionados para a empresa
       const { data: selectedComponents, error: componentsError } = await supabase
         .from('dre_empresa_componentes')
         .select(`
@@ -194,11 +195,13 @@ export const DREVisualizacao = () => {
             categoria:categories!contas_dre_componentes_referencia_id_fkey(
               id,
               name,
+              code,
               type
             ),
             indicador:indicators(
               id,
-              name
+              name,
+              code
             )
           )
         `)
@@ -207,16 +210,6 @@ export const DREVisualizacao = () => {
         .order('dre_conta_principal(ordem_padrao)', { ascending: true });
 
       if (componentsError) throw componentsError;
-
-      // Agrupar componentes por conta principal
-      const accountComponents = new Map<string, any[]>();
-      selectedComponents?.forEach(selection => {
-        const accountId = selection.dre_conta_principal.id;
-        if (!accountComponents.has(accountId)) {
-          accountComponents.set(accountId, []);
-        }
-        accountComponents.get(accountId)?.push(selection);
-      });
 
       // Buscar dados brutos para os últimos 12 meses
       const monthlyData = await Promise.all(
@@ -242,49 +235,87 @@ export const DREVisualizacao = () => {
       );
 
       // Processar os dados
-      const dreDataArray: DREData[] = [];
+      const accountsMap = new Map<string, DREData>();
 
-      for (const [accountId, components] of accountComponents) {
-        const account = components[0].dre_conta_principal;
-        const monthlyValues: { [key: string]: number } = {};
-        let totalValue = 0;
+      selectedComponents?.forEach(selection => {
+        const mainAccount = selection.dre_conta_principal;
+        const secondaryAccount = selection.dre_conta_secundaria;
+        const component = selection.componente;
 
+        // Calcular valores mensais do componente
+        const componentMonthlyValues: { [key: string]: number } = {};
         monthlyData.forEach(({ month, year, data }) => {
           const monthKey = `${month}-${year}`;
-          let monthTotal = 0;
-
-          // Somar valores de todos os componentes para este mês
-          components.forEach(selection => {
-            const component = selection.componente;
-            const relevantData = data.filter(d => {
-              if (component.referencia_tipo === 'categoria') {
-                return d.categoria_id === component.categoria?.id;
-              } else {
-                return d.indicador_id === component.indicador?.id;
-              }
-            });
-
-            const componentValue = calculateAccountValue(relevantData) * (component.peso || 1);
-            monthTotal += componentValue;
+          const relevantData = data.filter(d => {
+            if (component.referencia_tipo === 'categoria') {
+              return d.categoria_id === component.categoria?.id;
+            } else {
+              return d.indicador_id === component.indicador?.id;
+            }
           });
 
-          monthlyValues[monthKey] = monthTotal;
-          totalValue += monthTotal;
+          const value = relevantData.reduce((sum, d) => {
+            if (component.referencia_tipo === 'categoria') {
+              return sum + (component.categoria?.type === 'expense' ? -d.valor : d.valor);
+            }
+            return sum + d.valor;
+          }, 0) * (component.peso || 1);
+
+          componentMonthlyValues[monthKey] = value;
         });
 
-        dreDataArray.push({
-          accountId: account.id,
-          name: account.nome,
-          symbol: account.simbolo || '=',
-          type: account.tipo,
-          order: account.ordem_padrao,
-          monthlyValues,
-          value: totalValue,
-          isExpanded: true
-        });
-      }
+        // Criar ou atualizar conta principal
+        if (!accountsMap.has(mainAccount.id)) {
+          accountsMap.set(mainAccount.id, {
+            accountId: mainAccount.id,
+            name: mainAccount.nome,
+            symbol: mainAccount.simbolo || '=',
+            type: mainAccount.tipo,
+            order: mainAccount.ordem_padrao,
+            components: [],
+            secondaryAccounts: [],
+            monthlyValues: {},
+            isExpanded: expandedAccounts.has(mainAccount.id)
+          });
+        }
 
-      setDreData(dreDataArray.sort((a, b) => a.order - b.order));
+        const accountData = accountsMap.get(mainAccount.id)!;
+
+        // Adicionar componente ao nível apropriado
+        const componentData = {
+          ...component,
+          monthlyValues: componentMonthlyValues
+        };
+
+        if (secondaryAccount) {
+          // Encontrar ou criar conta secundária
+          let secAccount = accountData.secondaryAccounts.find(
+            sa => sa.id === secondaryAccount.id
+          );
+
+          if (!secAccount) {
+            secAccount = {
+              id: secondaryAccount.id,
+              nome: secondaryAccount.nome,
+              ordem: secondaryAccount.ordem,
+              componentes: []
+            };
+            accountData.secondaryAccounts.push(secAccount);
+          }
+
+          secAccount.componentes.push(componentData);
+        } else {
+          accountData.components.push(componentData);
+        }
+
+        // Atualizar valores mensais da conta principal
+        Object.entries(componentMonthlyValues).forEach(([monthKey, value]) => {
+          accountData.monthlyValues[monthKey] = (accountData.monthlyValues[monthKey] || 0) + value;
+        });
+      });
+
+      setDreData(Array.from(accountsMap.values())
+        .sort((a, b) => a.order - b.order));
     } catch (err) {
       console.error('Erro ao carregar dados do DRE:', err);
       setError('Erro ao carregar dados do DRE');
@@ -304,6 +335,30 @@ export const DREVisualizacao = () => {
     if (symbol === '+') return value >= 0 ? 'text-green-400' : 'text-red-400';
     if (symbol === '-') return value <= 0 ? 'text-green-400' : 'text-red-400';
     return value >= 0 ? 'text-green-400' : 'text-red-400';
+  };
+
+  const toggleAccountExpansion = (accountId: string) => {
+    setExpandedAccounts(prev => {
+      const next = new Set(prev);
+      if (next.has(accountId)) {
+        next.delete(accountId);
+      } else {
+        next.add(accountId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSecondaryAccountExpansion = (accountId: string) => {
+    setExpandedSecondaryAccounts(prev => {
+      const next = new Set(prev);
+      if (next.has(accountId)) {
+        next.delete(accountId);
+      } else {
+        next.add(accountId);
+      }
+      return next;
+    });
   };
 
   if (!currentUser) {
@@ -427,33 +482,170 @@ export const DREVisualizacao = () => {
                 </tr>
               </thead>
               <tbody>
-                {dreData.map((item) => (
-                  <tr key={item.accountId} className="border-b border-zinc-800">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <span className={getValueColor(item.value, item.symbol)}>
-                          {item.symbol}
-                        </span>
-                        <span className="text-zinc-300">{item.name}</span>
-                      </div>
-                    </td>
-                    {months.map(({ month, year }) => {
-                      const value = item.monthlyValues[`${month}-${year}`] || 0;
-                      return (
-                        <td key={`${month}-${year}`} className="px-3 py-4 text-right">
-                          <span className={getValueColor(value, item.symbol)}>
-                            {formatCurrency(value)}
+                {dreData.map((account) => {
+                  const hasContent = account.components.length > 0 || account.secondaryAccounts.length > 0;
+                  const isExpanded = expandedAccounts.has(account.accountId);
+                  const totalValue = Object.values(account.monthlyValues).reduce((sum, value) => sum + value, 0);
+
+                  return (
+                    <React.Fragment key={account.accountId}>
+                      {/* Conta Principal */}
+                      <tr className="border-b border-zinc-800">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            {hasContent && (
+                              <button
+                                onClick={() => toggleAccountExpansion(account.accountId)}
+                                className="p-1 hover:bg-zinc-700 rounded-lg"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown size={16} className="text-zinc-400" />
+                                ) : (
+                                  <ChevronRight size={16} className="text-zinc-400" />
+                                )}
+                              </button>
+                            )}
+                            {account.symbol === '+' && <Plus size={16} className="text-green-400" />}
+                            {account.symbol === '-' && <Minus size={16} className="text-red-400" />}
+                            {account.symbol === '=' && <Equal size={16} className="text-blue-400" />}
+                            <span className="text-zinc-100 font-medium">{account.name}</span>
+                          </div>
+                        </td>
+                        {months.map(({ month, year }) => {
+                          const value = account.monthlyValues[`${month}-${year}`] || 0;
+                          return (
+                            <td key={`${month}-${year}`} className="px-3 py-4 text-right">
+                              <span className={getValueColor(value, account.symbol)}>
+                                {formatCurrency(value)}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td className="px-6 py-4 text-right">
+                          <span className={getValueColor(totalValue, account.symbol)}>
+                            {formatCurrency(totalValue)}
                           </span>
                         </td>
-                      );
-                    })}
-                    <td className="px-6 py-4 text-right">
-                      <span className={getValueColor(item.value, item.symbol)}>
-                        {formatCurrency(item.value)}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                      </tr>
+
+                      {/* Componentes diretos da conta principal */}
+                      {isExpanded && account.components.map((component) => {
+                        const componentTotal = Object.values(component.monthlyValues).reduce((sum, value) => sum + value, 0);
+                        return (
+                          <tr key={component.id} className="border-b border-zinc-800 bg-zinc-800/30">
+                            <td className="px-6 py-3">
+                              <div className="flex items-center gap-2 pl-8">
+                                <span className="text-zinc-400 font-mono text-sm">
+                                  {component.referencia_tipo === 'categoria' ? component.categoria?.code : component.indicador?.code}
+                                </span>
+                                <span className="text-zinc-300">
+                                  {component.referencia_tipo === 'categoria' ? component.categoria?.name : component.indicador?.name}
+                                </span>
+                              </div>
+                            </td>
+                            {months.map(({ month, year }) => {
+                              const value = component.monthlyValues[`${month}-${year}`] || 0;
+                              return (
+                                <td key={`${month}-${year}`} className="px-3 py-3 text-right">
+                                  <span className={getValueColor(value, account.symbol)}>
+                                    {formatCurrency(value)}
+                                  </span>
+                                </td>
+                              );
+                            })}
+                            <td className="px-6 py-3 text-right">
+                              <span className={getValueColor(componentTotal, account.symbol)}>
+                                {formatCurrency(componentTotal)}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+
+                      {/* Contas Secundárias */}
+                      {isExpanded && account.secondaryAccounts.map((secondaryAccount) => {
+                        const isSecondaryExpanded = expandedSecondaryAccounts.has(secondaryAccount.id);
+                        const secondaryTotal = secondaryAccount.componentes.reduce((sum, comp) => 
+                          sum + Object.values(comp.monthlyValues).reduce((s, v) => s + v, 0), 0
+                        );
+
+                        return (
+                          <React.Fragment key={secondaryAccount.id}>
+                            {/* Cabeçalho da Conta Secundária */}
+                            <tr className="border-b border-zinc-800 bg-zinc-800/50">
+                              <td className="px-6 py-3">
+                                <div className="flex items-center gap-2 pl-8">
+                                  <button
+                                    onClick={() => toggleSecondaryAccountExpansion(secondaryAccount.id)}
+                                    className="p-1 hover:bg-zinc-700 rounded-lg"
+                                  >
+                                    {isSecondaryExpanded ? (
+                                      <ChevronDown size={16} className="text-zinc-400" />
+                                    ) : (
+                                      <ChevronRight size={16} className="text-zinc-400" />
+                                    )}
+                                  </button>
+                                  <span className="text-zinc-200 font-medium">{secondaryAccount.nome}</span>
+                                </div>
+                              </td>
+                              {months.map(({ month, year }) => {
+                                const value = secondaryAccount.componentes.reduce(
+                                  (sum, comp) => sum + (comp.monthlyValues[`${month}-${year}`] || 0), 0
+                                );
+                                return (
+                                  <td key={`${month}-${year}`} className="px-3 py-3 text-right">
+                                    <span className={getValueColor(value, account.symbol)}>
+                                      {formatCurrency(value)}
+                                    </span>
+                                  </td>
+                                );
+                              })}
+                              <td className="px-6 py-3 text-right">
+                                <span className={getValueColor(secondaryTotal, account.symbol)}>
+                                  {formatCurrency(secondaryTotal)}
+                                </span>
+                              </td>
+                            </tr>
+
+                            {/* Componentes da Conta Secundária */}
+                            {isSecondaryExpanded && secondaryAccount.componentes.map((component) => {
+                              const componentTotal = Object.values(component.monthlyValues).reduce((sum, value) => sum + value, 0);
+                              return (
+                                <tr key={component.id} className="border-b border-zinc-800 bg-zinc-800/20">
+                                  <td className="px-6 py-3">
+                                    <div className="flex items-center gap-2 pl-16">
+                                      <span className="text-zinc-400 font-mono text-sm">
+                                        {component.referencia_tipo === 'categoria' ? component.categoria?.code : component.indicador?.code}
+                                      </span>
+                                      <span className="text-zinc-300">
+                                        {component.referencia_tipo === 'categoria' ? component.categoria?.name : component.indicador?.name}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  {months.map(({ month, year }) => {
+                                    const value = component.monthlyValues[`${month}-${year}`] || 0;
+                                    return (
+                                      <td key={`${month}-${year}`} className="px-3 py-3 text-right">
+                                        <span className={getValueColor(value, account.symbol)}>
+                                          {formatCurrency(value)}
+                                        </span>
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="px-6 py-3 text-right">
+                                    <span className={getValueColor(componentTotal, account.symbol)}>
+                                      {formatCurrency(componentTotal)}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
