@@ -191,7 +191,7 @@ export const DREVisualizacao = () => {
             referencia_id,
             peso,
             ordem,
-            categoria:categories(
+            categoria:categories!contas_dre_componentes_referencia_id_fkey(
               id,
               name,
               type
@@ -203,7 +203,8 @@ export const DREVisualizacao = () => {
           )
         `)
         .eq('empresa_id', selectedCompanyId)
-        .eq('is_active', true);
+        .eq('is_active', true)
+        .order('dre_conta_principal(ordem_padrao)', { ascending: true });
 
       if (componentsError) throw componentsError;
 
