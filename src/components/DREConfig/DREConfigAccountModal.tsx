@@ -41,6 +41,7 @@ export const DREConfigAccountModal = ({
   const [selectedCompanies, setSelectedCompanies] = useState<string[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [customName, setCustomName] = useState('');
 
   useEffect(() => {
     fetchCompanies();
@@ -109,86 +110,84 @@ export const DREConfigAccountModal = ({
     setBlankAccountSign('positive');
     setSelectedCompanies([]);
     setAccountId(null);
+    setCustomName('');
+  };
+
+  const handleSaveComponent = async (componentId: string, customName: string) => {
+    try {
+      const { error } = await supabase
+        .from('contas_dre_componentes')
+        .update({ nome_exibicao: customName })
+        .eq('id', componentId);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Erro ao salvar nome personalizado:', err);
+      throw err;
+    }
   };
 
   const handleSave = async () => {
+    if (!selectedCompanyId) {
+      setNotification({ type: 'error', message: 'Selecione uma empresa antes de criar ou editar uma conta' });
+      return;
+    }
+
     try {
-      // Primeiro, limpar quaisquer componentes existentes se estiver editando
+      let data;
       if (editingAccount?.id) {
-        await supabase
-          .from('contas_dre_componentes')
-          .delete()
-          .eq('conta_dre_modelo_id', editingAccount.id);
-      }
-
-      const accountData = {
-        name: accountName,
-        type: accountType === 'category' ? categoryType : accountType,
-        category_ids: accountType === 'category' ? selectedCategories : null,
-        indicator_id: accountType === 'calculated' ? selectedIndicator : null,
-        selected_accounts: accountType === 'total' ? selectedAccounts : null,
-        parent_account_id: selectedParentAccount,
-        is_active: true,
-        sign: accountType === 'flex' ? blankAccountSign : null,
-        display_order: 0
-      };
-
-      let newAccountId;
-      if (editingAccount?.id) {
-        const { data, error } = await supabase
+        const { data: updatedAccount, error } = await supabase
           .from('dre_config_accounts')
-          .update(accountData)
+          .update({
+            name: accountName,
+            type: accountType === 'category' ? categoryType : accountType,
+            category_ids: accountType === 'category' ? selectedCategories : null,
+            indicator_id: accountType === 'calculated' ? selectedIndicator : null,
+            selected_accounts: accountType === 'total' ? selectedAccounts : null,
+            parent_account_id: selectedParentAccount || null,
+            sign: accountType === 'flex' ? blankAccountSign : null
+          })
           .eq('id', editingAccount.id)
           .select()
           .single();
 
         if (error) throw error;
-        newAccountId = editingAccount.id;
+        data = updatedAccount;
       } else {
-        const { data, error: insertError } = await supabase
+        const { data: newAccount, error: insertError } = await supabase
           .from('dre_config_accounts')
-          .insert([accountData])
+          .insert([{
+            name: accountName,
+            type: accountType === 'category' ? categoryType : accountType,
+            category_ids: accountType === 'category' ? selectedCategories : null,
+            indicator_id: accountType === 'calculated' ? selectedIndicator : null,
+            selected_accounts: accountType === 'total' ? selectedAccounts : null,
+            parent_account_id: selectedParentAccount || null,
+            sign: accountType === 'flex' ? blankAccountSign : null,
+            is_active: true
+          }])
           .select()
           .single();
 
         if (insertError) throw insertError;
-        newAccountId = data.id;
-        setAccountId(data.id);
-      }
+        data = newAccount;
 
-      // Salvar os componentes
-      if (accountType === 'category' && selectedCategories.length > 0) {
-        for (const categoryId of selectedCategories) {
-          const { error: componentError } = await supabase
-            .from('contas_dre_componentes')
-            .insert({
-              conta_dre_modelo_id: newAccountId,
-              referencia_tipo: 'categoria',
-              referencia_id: categoryId,
-              categoria_id: categoryId,
-              peso: 1,
-              ordem: selectedCategories.indexOf(categoryId)
-            });
-
-          if (componentError) throw componentError;
-        }
-      }
-
-      if (accountType === 'calculated' && selectedIndicator) {
-        const { error: componentError } = await supabase
-          .from('contas_dre_componentes')
+        const { error: linkError } = await supabase
+          .from('dre_config_account_companies')
           .insert({
-            conta_dre_modelo_id: newAccountId,
-            referencia_tipo: 'indicador',
-            referencia_id: selectedIndicator,
-            peso: 1,
-            ordem: 0
+            account_id: data.id,
+            company_id: selectedCompanyId,
+            is_active: true
           });
 
-        if (componentError) throw componentError;
+        if (linkError) throw linkError;
       }
 
-      onSave(accountData as DREConfigAccount);
+      if (customName && data.id) {
+        await handleSaveComponent(data.id, customName);
+      }
+
+      onSave(data);
       setNotification({ type: 'success', message: 'Conta salva com sucesso!' });
       setTimeout(() => {
         setNotification(null);
@@ -196,40 +195,7 @@ export const DREConfigAccountModal = ({
       }, 2000);
     } catch (err) {
       console.error('Erro ao salvar conta:', err);
-      setNotification({ type: 'error', message: 'Erro ao salvar conta. Tente novamente.' });
-    }
-  };
-
-  const handleToggleCompany = async (companyId: string) => {
-    if (!accountId) return;
-
-    try {
-      const isSelected = selectedCompanies.includes(companyId);
-
-      if (isSelected) {
-        const { error } = await supabase
-          .from('dre_config_account_companies')
-          .delete()
-          .eq('account_id', accountId)
-          .eq('company_id', companyId);
-
-        if (error) throw error;
-        setSelectedCompanies(selectedCompanies.filter(id => id !== companyId));
-      } else {
-        const { error } = await supabase
-          .from('dre_config_account_companies')
-          .insert({
-            account_id: accountId,
-            company_id: companyId,
-            is_active: true
-          });
-
-        if (error) throw error;
-        setSelectedCompanies([...selectedCompanies, companyId]);
-      }
-    } catch (err) {
-      console.error('Erro ao atualizar empresas:', err);
-      setNotification({ type: 'error', message: 'Erro ao atualizar empresas. Tente novamente.' });
+      setNotification({ type: 'error', message: 'Erro ao salvar conta. Verifique se todos os campos estão preenchidos corretamente.' });
     }
   };
 
@@ -359,21 +325,32 @@ export const DREConfigAccountModal = ({
                       c.name.toLowerCase().includes(categorySearch.toLowerCase())
                     )
                     .map(category => (
-                      <label key={category.id} className="flex items-center gap-2 p-2 hover:bg-zinc-800 rounded-lg">
-                        <input
-                          type="checkbox"
-                          checked={selectedCategories.includes(category.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedCategories([...selectedCategories, category.id]);
-                            } else {
-                              setSelectedCategories(selectedCategories.filter(id => id !== category.id));
-                            }
-                          }}
-                          className="text-blue-600"
-                        />
-                        <span className="text-zinc-300">{category.code} - {category.name}</span>
-                      </label>
+                      <div key={category.id} className="flex flex-col gap-2 p-2 hover:bg-zinc-800 rounded-lg">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedCategories.includes(category.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedCategories([...selectedCategories, category.id]);
+                              } else {
+                                setSelectedCategories(selectedCategories.filter(id => id !== category.id));
+                              }
+                            }}
+                            className="text-blue-600"
+                          />
+                          <span className="text-zinc-300">{category.code} - {category.name}</span>
+                        </label>
+                        {selectedCategories.includes(category.id) && (
+                          <input
+                            type="text"
+                            placeholder="Nome personalizado (opcional)"
+                            value={customName}
+                            onChange={(e) => setCustomName(e.target.value)}
+                            className="ml-6 px-3 py-1 bg-zinc-700 rounded text-zinc-300 text-sm"
+                          />
+                        )}
+                      </div>
                     ))}
                 </div>
               </div>
@@ -398,15 +375,26 @@ export const DREConfigAccountModal = ({
                     i.name.toLowerCase().includes(indicatorSearch.toLowerCase())
                   )
                   .map(indicator => (
-                    <label key={indicator.id} className="flex items-center gap-2 p-2 hover:bg-zinc-800 rounded-lg">
-                      <input
-                        type="radio"
-                        checked={selectedIndicator === indicator.id}
-                        onChange={() => setSelectedIndicator(indicator.id)}
-                        className="text-blue-600"
-                      />
-                      <span className="text-zinc-300">{indicator.code} - {indicator.name}</span>
-                    </label>
+                    <div key={indicator.id} className="flex flex-col gap-2 p-2 hover:bg-zinc-800 rounded-lg">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={selectedIndicator === indicator.id}
+                          onChange={() => setSelectedIndicator(indicator.id)}
+                          className="text-blue-600"
+                        />
+                        <span className="text-zinc-300">{indicator.code} - {indicator.name}</span>
+                      </label>
+                      {selectedIndicator === indicator.id && (
+                        <input
+                          type="text"
+                          placeholder="Nome personalizado (opcional)"
+                          value={customName}
+                          onChange={(e) => setCustomName(e.target.value)}
+                          className="ml-6 px-3 py-1 bg-zinc-700 rounded text-zinc-300 text-sm"
+                        />
+                      )}
+                    </div>
                   ))}
               </div>
             </div>
@@ -533,3 +521,5 @@ export const DREConfigAccountModal = ({
     </div>
   );
 };
+
+export { DREConfigAccountModal }
