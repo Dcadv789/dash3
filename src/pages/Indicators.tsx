@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, SlidersHorizontal, Calculator, Edit, Trash2 } from 'lucide-react';
+import { Plus, Search, SlidersHorizontal, Calculator, Edit, Trash2, Power, Building2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Category, Indicator } from '../types/financial';
 
@@ -31,9 +31,12 @@ export const Indicators = () => {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showNewIndicatorModal, setShowNewIndicatorModal] = useState(false);
+  const [showCompanyModal, setShowCompanyModal] = useState(false);
+  const [selectedIndicator, setSelectedIndicator] = useState<Indicator | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<'all' | 'manual' | 'calculated'>('all');
+  const [showIndicatorModal, setShowIndicatorModal] = useState(false);
+  const [editingIndicator, setEditingIndicator] = useState<Indicator | null>(null);
 
   useEffect(() => {
     fetchCompanies();
@@ -88,14 +91,101 @@ export const Indicators = () => {
     }
   };
 
-  const getIndicatorStatus = (indicatorId: string, companyId: string): boolean => {
-    return companyIndicators.some(ci => 
-      ci.indicator_id === indicatorId && 
-      ci.company_id === companyId
-    );
+  const handleCreateIndicator = async () => {
+    try {
+      // Encontrar o próximo código disponível
+      const existingCodes = indicators
+        .map(i => parseInt(i.code.replace('I', '')))
+        .sort((a, b) => a - b);
+      
+      let nextCode = 1;
+      for (const code of existingCodes) {
+        if (code !== nextCode) break;
+        nextCode++;
+      }
+      
+      const formattedCode = `I${String(nextCode).padStart(4, '0')}`;
+      
+      setEditingIndicator({
+        id: '',
+        code: formattedCode,
+        name: 'Novo Indicador',
+        type: 'manual',
+        is_active: true,
+        calculation_type: null,
+        operation: null,
+        source_ids: []
+      });
+      setShowIndicatorModal(true);
+    } catch (err) {
+      console.error('Erro ao criar indicador:', err);
+      setError('Erro ao criar indicador');
+    }
   };
 
-  const handleToggleIndicatorStatus = async (indicatorId: string, companyId: string) => {
+  const handleSaveIndicator = async () => {
+    if (!editingIndicator) return;
+
+    try {
+      if (editingIndicator.id) {
+        // Atualizar indicador existente
+        const { error } = await supabase
+          .from('indicators')
+          .update({
+            name: editingIndicator.name,
+            type: editingIndicator.type,
+            calculation_type: editingIndicator.calculation_type,
+            operation: editingIndicator.operation,
+            source_ids: editingIndicator.source_ids,
+            is_active: editingIndicator.is_active
+          })
+          .eq('id', editingIndicator.id);
+
+        if (error) throw error;
+      } else {
+        // Criar novo indicador
+        const { data, error } = await supabase
+          .from('indicators')
+          .insert([{
+            code: editingIndicator.code,
+            name: editingIndicator.name,
+            type: editingIndicator.type,
+            calculation_type: editingIndicator.calculation_type,
+            operation: editingIndicator.operation,
+            source_ids: editingIndicator.source_ids,
+            is_active: editingIndicator.is_active
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+      }
+
+      await fetchIndicators();
+      setShowIndicatorModal(false);
+      setEditingIndicator(null);
+    } catch (err) {
+      console.error('Erro ao salvar indicador:', err);
+      setError('Erro ao salvar indicador');
+    }
+  };
+
+  const handleToggleStatus = async (indicator: Indicator) => {
+    try {
+      const { error } = await supabase
+        .from('indicators')
+        .update({ is_active: !indicator.is_active })
+        .eq('id', indicator.id);
+
+      if (error) throw error;
+      await fetchIndicators();
+    } catch (err) {
+      console.error('Erro ao alterar status:', err);
+      setError('Erro ao alterar status');
+    }
+  };
+
+  const handleToggleCompany = async (indicatorId: string, companyId: string) => {
     try {
       const existingLink = companyIndicators.find(
         ci => ci.indicator_id === indicatorId && ci.company_id === companyId
@@ -127,8 +217,8 @@ export const Indicators = () => {
         setCompanyIndicators([...companyIndicators, data]);
       }
     } catch (err) {
-      console.error('Erro ao alterar status do indicador:', err);
-      setError('Erro ao alterar status do indicador');
+      console.error('Erro ao alterar vínculo com empresa:', err);
+      setError('Erro ao alterar vínculo com empresa');
     }
   };
 
@@ -187,7 +277,7 @@ export const Indicators = () => {
           <p className="text-zinc-400 mt-1">Gerencie os indicadores financeiros por empresa</p>
         </div>
         <button 
-          onClick={() => setShowNewIndicatorModal(true)}
+          onClick={handleCreateIndicator}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
         >
           <Plus size={20} />
@@ -280,28 +370,13 @@ export const Indicators = () => {
             </thead>
             <tbody>
               {filteredIndicators.map((indicator) => (
-                <tr key={indicator.id} className="border-b border-zinc-800 hover:bg-zinc-800/50">
+                <tr key={indicator.id} className={`border-b border-zinc-800 hover:bg-zinc-800/50 ${!indicator.is_active && 'opacity-50'}`}>
                   <td className="px-6 py-4">
                     <span className="text-zinc-400 font-mono">{indicator.code}</span>
                   </td>
                   <td className="px-6 py-4">
                     <div className="space-y-2">
                       <p className="text-zinc-100">{indicator.name}</p>
-                      <div className="flex flex-wrap gap-2">
-                        {companies.map(company => (
-                          <button
-                            key={company.id}
-                            onClick={() => handleToggleIndicatorStatus(indicator.id, company.id)}
-                            className={`px-2 py-1 rounded text-xs ${
-                              getIndicatorStatus(indicator.id, company.id)
-                                ? 'bg-green-500/20 text-green-400'
-                                : 'bg-zinc-700 text-zinc-400'
-                            }`}
-                          >
-                            {company.trading_name}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -326,7 +401,29 @@ export const Indicators = () => {
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        onClick={() => setShowNewIndicatorModal(true)}
+                        onClick={() => {
+                          setSelectedIndicator(indicator);
+                          setShowCompanyModal(true);
+                        }}
+                        className="p-2 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-400"
+                        title="Selecionar Empresas"
+                      >
+                        <Building2 size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(indicator)}
+                        className={`p-2 hover:bg-zinc-700 rounded-lg transition-colors ${
+                          indicator.is_active ? 'text-green-400' : 'text-red-400'
+                        }`}
+                        title={indicator.is_active ? 'Desativar' : 'Ativar'}
+                      >
+                        <Power size={16} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingIndicator(indicator);
+                          setShowIndicatorModal(true);
+                        }}
                         className="p-2 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-400"
                       >
                         <Edit size={16} />
@@ -345,6 +442,198 @@ export const Indicators = () => {
           </table>
         </div>
       </div>
+
+      {/* Modal de Seleção de Empresas */}
+      {showCompanyModal && selectedIndicator && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-semibold text-zinc-100">
+                Selecionar Empresas
+              </h2>
+              <button
+                onClick={() => {
+                  setShowCompanyModal(false);
+                  setSelectedIndicator(null);
+                }}
+                className="text-zinc-400 hover:text-zinc-100"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {companies.map(company => (
+                <label
+                  key={company.id}
+                  className="flex items-center gap-3 p-3 hover:bg-zinc-800 rounded-lg cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={companyIndicators.some(
+                      ci => ci.indicator_id === selectedIndicator.id && ci.company_id === company.id
+                    )}
+                    onChange={() => handleToggleCompany(selectedIndicator.id, company.id)}
+                    className="w-4 h-4 rounded border-zinc-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-zinc-800"
+                  />
+                  <span className="text-zinc-300">{company.trading_name}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={() => {
+                  setShowCompanyModal(false);
+                  setSelectedIndicator(null);
+                }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição/Criação de Indicador */}
+      {showIndicatorModal && editingIndicator && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-semibold text-zinc-100">
+                {editingIndicator.id ? 'Editar Indicador' : 'Novo Indicador'}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowIndicatorModal(false);
+                  setEditingIndicator(null);
+                }}
+                className="text-zinc-400 hover:text-zinc-100"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">
+                  Código
+                </label>
+                <input
+                  type="text"
+                  value={editingIndicator.code}
+                  disabled
+                  className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100 opacity-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">
+                  Nome
+                </label>
+                <input
+                  type="text"
+                  value={editingIndicator.name}
+                  onChange={(e) => setEditingIndicator({ ...editingIndicator, name: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-1">
+                  Tipo
+                </label>
+                <select
+                  value={editingIndicator.type}
+                  onChange={(e) => setEditingIndicator({
+                    ...editingIndicator,
+                    type: e.target.value as 'manual' | 'calculated',
+                    calculation_type: e.target.value === 'manual' ? null : 'category',
+                    operation: e.target.value === 'manual' ? null : 'sum'
+                  })}
+                  className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
+                >
+                  <option value="manual">Manual</option>
+                  <option value="calculated">Calculado</option>
+                </select>
+              </div>
+
+              {editingIndicator.type === 'calculated' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                      Tipo de Cálculo
+                    </label>
+                    <select
+                      value={editingIndicator.calculation_type || 'category'}
+                      onChange={(e) => setEditingIndicator({
+                        ...editingIndicator,
+                        calculation_type: e.target.value as 'category' | 'indicator'
+                      })}
+                      className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
+                    >
+                      <option value="category">Categorias</option>
+                      <option value="indicator">Indicadores</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                      Operação
+                    </label>
+                    <select
+                      value={editingIndicator.operation || 'sum'}
+                      onChange={(e) => setEditingIndicator({
+                        ...editingIndicator,
+                        operation: e.target.value as 'sum' | 'subtract' | 'multiply' | 'divide'
+                      })}
+                      className="w-full px-4 py-2 bg-zinc-800 rounded-lg text-zinc-100"
+                    >
+                      {Object.entries(OPERATION_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editingIndicator.is_active}
+                    onChange={(e) => setEditingIndicator({
+                      ...editingIndicator,
+                      is_active: e.target.checked
+                    })}
+                    className="w-4 h-4 rounded border-zinc-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-zinc-800"
+                  />
+                  <span className="text-zinc-400">Indicador Ativo</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => {
+                  setShowIndicatorModal(false);
+                  setEditingIndicator(null);
+                }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveIndicator}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
