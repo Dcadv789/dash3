@@ -170,7 +170,6 @@ export const DREVisualizacao = () => {
 
       const months = getLast12Months();
 
-      // Buscar contas e componentes selecionados para a empresa
       const { data: selectedComponents, error: componentsError } = await supabase
         .from('dre_empresa_componentes')
         .select(`
@@ -211,7 +210,6 @@ export const DREVisualizacao = () => {
 
       if (componentsError) throw componentsError;
 
-      // Buscar dados brutos para os últimos 12 meses
       const monthlyData = await Promise.all(
         months.map(async ({ month, year }) => {
           const { data, error } = await supabase
@@ -234,7 +232,6 @@ export const DREVisualizacao = () => {
         })
       );
 
-      // Processar os dados
       const accountsMap = new Map<string, DREData>();
 
       selectedComponents?.forEach(selection => {
@@ -242,7 +239,6 @@ export const DREVisualizacao = () => {
         const secondaryAccount = selection.dre_conta_secundaria;
         const component = selection.componente;
 
-        // Calcular valores mensais do componente
         const componentMonthlyValues: { [key: string]: number } = {};
         monthlyData.forEach(({ month, year, data }) => {
           const monthKey = `${month}-${year}`;
@@ -264,7 +260,6 @@ export const DREVisualizacao = () => {
           componentMonthlyValues[monthKey] = value;
         });
 
-        // Criar ou atualizar conta principal
         if (!accountsMap.has(mainAccount.id)) {
           accountsMap.set(mainAccount.id, {
             accountId: mainAccount.id,
@@ -281,14 +276,12 @@ export const DREVisualizacao = () => {
 
         const accountData = accountsMap.get(mainAccount.id)!;
 
-        // Adicionar componente ao nível apropriado
         const componentData = {
           ...component,
           monthlyValues: componentMonthlyValues
         };
 
         if (secondaryAccount) {
-          // Encontrar ou criar conta secundária
           let secAccount = accountData.secondaryAccounts.find(
             sa => sa.id === secondaryAccount.id
           );
@@ -308,7 +301,6 @@ export const DREVisualizacao = () => {
           accountData.components.push(componentData);
         }
 
-        // Atualizar valores mensais da conta principal
         Object.entries(componentMonthlyValues).forEach(([monthKey, value]) => {
           accountData.monthlyValues[monthKey] = (accountData.monthlyValues[monthKey] || 0) + value;
         });
@@ -363,7 +355,7 @@ export const DREVisualizacao = () => {
 
   if (!currentUser) {
     return (
-      <div className="max-w-7xl mx-auto py-8">
+      <div className="max-w-[1600px] mx-auto py-8">
         <div className="bg-zinc-900 rounded-xl p-8 text-center">
           <p className="text-zinc-400">Carregando dados do usuário...</p>
         </div>
@@ -374,7 +366,7 @@ export const DREVisualizacao = () => {
   const months = getLast12Months();
 
   return (
-    <div className="max-w-7xl mx-auto py-8">
+    <div className="max-w-[1600px] mx-auto py-8">
       <div className="bg-zinc-900 rounded-xl p-8 mb-8">
         <div className="flex justify-between items-start mb-6">
           <div>
@@ -477,7 +469,7 @@ export const DREVisualizacao = () => {
                     </th>
                   ))}
                   <th className="px-6 py-4 text-right text-sm font-semibold text-zinc-400">
-                    Acumulado
+                    Total
                   </th>
                 </tr>
               </thead>
@@ -535,9 +527,6 @@ export const DREVisualizacao = () => {
                           <tr key={component.id} className="border-b border-zinc-800 bg-zinc-800/30">
                             <td className="px-6 py-3">
                               <div className="flex items-center gap-2 pl-8">
-                                <span className="text-zinc-400 font-mono text-sm">
-                                  {component.referencia_tipo === 'categoria' ? component.categoria?.code : component.indicador?.code}
-                                </span>
                                 <span className="text-zinc-300">
                                   {component.referencia_tipo === 'categoria' ? component.categoria?.name : component.indicador?.name}
                                 </span>
@@ -614,9 +603,6 @@ export const DREVisualizacao = () => {
                                 <tr key={component.id} className="border-b border-zinc-800 bg-zinc-800/20">
                                   <td className="px-6 py-3">
                                     <div className="flex items-center gap-2 pl-16">
-                                      <span className="text-zinc-400 font-mono text-sm">
-                                        {component.referencia_tipo === 'categoria' ? component.categoria?.code : component.indicador?.code}
-                                      </span>
                                       <span className="text-zinc-300">
                                         {component.referencia_tipo === 'categoria' ? component.categoria?.name : component.indicador?.name}
                                       </span>
